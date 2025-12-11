@@ -10,5 +10,6 @@ export default defineConfig({
       },
     }),
   ],
-  base: '/https://shawnanncheok.github.io/--website//', 
+  base: '/--website/',
 })
+  
