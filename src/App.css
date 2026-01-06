@@ -2,6 +2,14 @@
    Global / Page
 ========================= */
 
+* { box-sizing: border-box; }
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
 .page {
   width: 100vw;
   height: 100vh;
@@ -17,13 +25,15 @@
   opacity: 0.7;
   text-decoration: none;
   font-size: 14px;
+  z-index: 20;
 }
 .page-link:hover { opacity: 1; }
 
 /* =========================
-   Scene (Background Track)
+   Scene (Background Track + Advanced stop)
 ========================= */
 
+/* Scene base */
 /* =========================
    Scene (Background Track)
 ========================= */
@@ -40,16 +50,26 @@
   height: 100%;
 }
 
-/* ✅ 背景带（横向排） */
+/* 你有 BG_COUNT=4，且 tiles 做两轮 => 8 */
+:root{
+  --bg-count: 4;                /* 一轮几张 */
+  --bg-loops: 2;                /* 你做了两轮 */
+  --tile-total: calc(var(--bg-count) * var(--bg-loops)); /* 8 */
+}
+
+/* 背景带 */
 .bg-track{
   position: absolute;
   inset: 0;
   display: flex;
   height: 100%;
   will-change: transform;
+
+  /* ✅ 让 track 宽度 = tile 总数 * 100vw */
+  width: calc(100vw * var(--tile-total));
 }
 
-/* ✅ 每张=一屏 */
+/* 每张背景 */
 .bg-tile{
   flex: 0 0 100vw;
   height: 100%;
@@ -58,42 +78,31 @@
   background-repeat: no-repeat;
 }
 
-/* ✅ 背景往右滚动 */
-.bg-running .bg-track{
-  animation: track-right 10s linear infinite; /* 越小越快 */
+/* ✅ AUTO 才滚 */
+.bg-track.track-auto{
+  animation: track-auto 10s linear infinite;
 }
 
-.bg-stopped .bg-track{
-  animation: none;
-}
-
-/* ✅ 4 张背景就写 4（你现在 BG_COUNT=4） */
-@keyframes track-right{
-  from { transform: translateX(calc(-100vw * 4)); }
+/*
+  ✅ 最稳的无缝：从 “-一整轮宽度” 滚到 0
+  一整轮宽度 = 4 张 = 400vw
+  注意：这里用百分比不稳，因为 track 宽度是 8 张；
+  所以我们直接滚动：-(100vw * bg-count) -> 0
+*/
+@keyframes track-auto{
+  from { transform: translateX(calc(-100vw * var(--bg-count))); }
   to   { transform: translateX(0); }
 }
 
 
-/* ✅ 背景往右滚动 */
-.bg-running .bg-track {
-  animation: track-right 10s linear infinite; /* 越小越快 */
+/* 你原本的前景样式可保留，这里只加一个“跑动抖动”的触发类 */
+.fg-running .fg-img.mascot {
+  animation: floatMascot 0.22s linear infinite;
+}
+.fg-running .fg-img.weapon {
+  animation: floatWeapon 0.22s linear infinite;
 }
 
-.bg-stopped .bg-track {
-  animation: none;
-}
-
-/* 4 张图 => 位移 4 屏宽（100vw*4） */
-@keyframes track-right {
-  from { transform: translateX(calc(-100vw * 4)); }
-  to   { transform: translateX(0); }
-}
-
-/* （旧的 bg-scroll-right 可留可删，不影响） */
-@keyframes bg-scroll-right {
-  from { background-position: 0 0; }
-  to   { background-position: 2600px 0; }
-}
 
 /* =========================
    Foreground (方案B: 重叠正中)
@@ -110,8 +119,9 @@
 
   display: grid;
   place-items: center;
-  z-index: 5;
-  pointer-events: none; /* 不挡点击 */
+
+  z-index: 10;
+  pointer-events: none;
 }
 
 /* mascot 基础大小 */
@@ -122,13 +132,13 @@
   filter: drop-shadow(0 10px 20px rgba(0,0,0,0.5));
 }
 
-/* weapon 叠在 mascot 上 */
+/* weapon 叠在 mascot 上（可调 transform） */
 .fg-center.stack .fg-img.weapon {
   position: absolute;
   left: 50%;
   top: 50%;
-
   transform: translate(-30%, -55%) rotate(12deg);
+
   width: min(20vw, 260px);
   height: auto;
 
@@ -136,11 +146,12 @@
   filter: drop-shadow(0 10px 20px rgba(0,0,0,0.5));
 }
 
-/* 跑动时轻微抖动（可选） */
-.bg-running .fg-img.mascot {
+/* ✅ 可选：背景在 auto 跑时，前景轻微抖动
+   这里用 track-auto 做条件，避免你之前 bg-running 混乱 */
+.bg-track.track-auto ~ .fg-center .fg-img.mascot {
   animation: floatMascot 0.22s linear infinite;
 }
-.bg-running .fg-img.weapon {
+.bg-track.track-auto ~ .fg-center .fg-img.weapon {
   animation: floatWeapon 0.22s linear infinite;
 }
 
@@ -198,14 +209,6 @@
 }
 .admin-link:hover { opacity: 1; }
 
-/* 旧 admin-actions 你还在用就保留 */
-.admin-actions {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-}
-
 /* Button */
 .btn {
   padding: 12px 14px;
@@ -221,51 +224,13 @@
 .btn.danger { background: rgba(255,80,80,0.18); }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
-/* Preview */
-.admin-preview {
-  margin-top: 16px;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-}
-
-.preview-label {
-  font-size: 13px;
-  opacity: 0.75;
-  margin-bottom: 6px;
-}
-
-.preview-box {
-  height: 160px;
+.btn.small {
+  padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.14);
-  background: rgba(0,0,0,0.35);
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-}
-
-.preview-img { width: 100%; height: 100%; }
-.preview-img.cover { object-fit: cover; }
-.preview-img.contain { object-fit: contain; padding: 10px; }
-
-.preview-empty {
-  opacity: 0.6;
-  font-weight: 800;
-  letter-spacing: 1px;
-}
-
-/* Tip */
-.admin-tip {
-  margin: 14px 0 0;
-  opacity: 0.65;
-  font-size: 13px;
-  line-height: 1.5;
 }
 
 /* =========================
    Admin UI v2 (Number Buttons + Columns + Bottom Buttons)
-   兼容你现在的 AdminPage.jsx（不改逻辑）
 ========================= */
 
 .admin-card.admin-v2 {
@@ -321,14 +286,11 @@
   cursor: pointer;
   font-weight: 900;
 }
+.num-pill:hover { background: rgba(255,255,255,0.12); }
 
-.num-pill:hover {
-  background: rgba(255,255,255,0.12);
-}
-
-.num-strip.is-disabled .num-pill {
-  opacity: 0.5;
-  cursor: not-allowed;
+.num-pill.active{
+  background: rgba(255,255,255,0.22);
+  border-color: rgba(255,255,255,0.40);
 }
 
 .pick-actions {
@@ -337,9 +299,38 @@
   justify-content: flex-end;
 }
 
-.btn.small {
-  padding: 10px 12px;
+/* Preview */
+.admin-preview {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.preview-label {
+  font-size: 13px;
+  opacity: 0.75;
+  margin-bottom: 6px;
+}
+
+.preview-box {
+  height: 160px;
   border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.35);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.preview-img { width: 100%; height: 100%; }
+.preview-img.cover { object-fit: cover; }
+.preview-img.contain { object-fit: contain; padding: 10px; }
+
+.preview-empty {
+  opacity: 0.6;
+  font-weight: 800;
+  letter-spacing: 1px;
 }
 
 /* bottom buttons row */
@@ -351,8 +342,16 @@
   flex-wrap: wrap;
 }
 
+/* Tip */
+.admin-tip {
+  margin: 14px 0 0;
+  opacity: 0.65;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 /* =========================
-   Responsive tweaks
+   Responsive
 ========================= */
 
 @media (max-width: 900px) {
@@ -360,9 +359,9 @@
   .admin-pickers { grid-template-columns: 1fr; }
   .admin-preview { grid-template-columns: 1fr; }
   .preview-box { height: 180px; }
-}
 
-.num-pill.active{
-  background: rgba(255,255,255,0.22);
-  border-color: rgba(255,255,255,0.40);
+  .fg-center.stack {
+    width: min(86vw, 900px);
+    height: min(76vh, 700px);
+  }
 }

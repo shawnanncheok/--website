@@ -6,6 +6,7 @@ import { db } from './firebase'
 function NumberStrip({ count, activeIndex = null, onPick }) {
   const arr = Array.from({ length: count }, (_, i) => i)
 
+
   return (
     <div className="num-strip">
       {arr.map(i => (
