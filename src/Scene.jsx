@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BACKGROUNDS, MASCOTS, WEAPONS } from "./assetsList";
 
-// path -> index（兼容 /--website/ 前缀，只比对结尾）
-function indexFromPath(list, path) {
+/** path -> index（优先 regex，否则 endsWith） */
+function indexFromPath(list, path, kind) {
   if (!path) return null;
   const p = String(path);
+
+  const re =
+    kind === "background"
+      ? /(background|bg)\/(\d+)\.png$/
+      : /(weapon|weapons)\/(\d+)\.png$/;
+
+  const m = p.match(re);
+  if (m) {
+    const n = Number(m[2]);
+    const idx = n - 1;
+    return Number.isFinite(n) && idx >= 0 && idx < list.length ? idx : null;
+  }
+
   const idx = list.findIndex((src) => p.endsWith(String(src)));
   return idx >= 0 ? idx : null;
 }
@@ -14,17 +27,10 @@ function easeOutCubic(t) {
 }
 
 export default function Scene({ background, mascot, weapon }) {
-  const trackRef = useRef(null);
-
-  // 目标背景 index（0-based），null = AUTO
-  const targetBgIndex = useMemo(
-    () => indexFromPath(BACKGROUNDS, background),
-    [background]
-  );
-
-  // AUTO mascot/weapon：null 才循环
+  /* =========================
+     1) Mascot AUTO（null 才循环）
+  ========================= */
   const [autoMascotIdx, setAutoMascotIdx] = useState(0);
-  const [autoWeaponIdx, setAutoWeaponIdx] = useState(0);
 
   useEffect(() => {
     if (mascot) return;
@@ -35,135 +41,255 @@ export default function Scene({ background, mascot, weapon }) {
     return () => clearInterval(t);
   }, [mascot]);
 
-  useEffect(() => {
-    if (weapon) return;
-    const t = setInterval(
-      () => setAutoWeaponIdx((i) => (i + 1) % WEAPONS.length),
-      120
-    );
-    return () => clearInterval(t);
-  }, [weapon]);
-
   const mascotSrc = mascot || MASCOTS[autoMascotIdx];
-  const weaponSrc = weapon || WEAPONS[autoWeaponIdx];
 
-  // 背景 tiles 做两轮（无缝）
-  const tiles = useMemo(
-  () => [...BACKGROUNDS, ...BACKGROUNDS, ...BACKGROUNDS],
+  /* =========================
+     2) Background（向左滚 + 慢停）
+     - 逻辑：pos 表示走了多少（向左 = pos 增加，track translateX = -pos）
+  ========================= */
+  const bgTrackRef = useRef(null);
+  const targetBgIndex = useMemo(
+    () => indexFromPath(BACKGROUNDS, background, "background"),
+    [background]
+  );
+
+  const bgTiles = useMemo(
+    () => [...BACKGROUNDS, ...BACKGROUNDS, ...BACKGROUNDS], // 3轮防黑屏
     []
-  )
+  );
 
-  // ===== 背景滚动（JS 控制）=====
-  const xRef = useRef(0);                 // 当前 translateX（负数：向左滚）
-  const rafRef = useRef(0);
-  const modeRef = useRef("auto");         // "auto" | "stopping"
-  const stopAnimRef = useRef(null);       // { fromX, toX, start, dur }
+  const bgPosRef = useRef(0);
+  const bgModeRef = useRef("auto"); // auto | stopping | fixed
+  const bgStopRef = useRef(null);   // { fromPos, toPos, start, dur }
+  const bgRafRef = useRef(0);
+  const bgLastRef = useRef(0);
 
-  // 每帧更新 transform
-  const applyX = (x) => {
-    const el = trackRef.current;
-    if (!el) return;
-    el.style.transform = `translateX(${x}px)`;
-  };
-
-  // 主 rAF 循环：auto 时一直滚；stopping 时 ease 到目标
+  // 背景 rAF 循环
   useEffect(() => {
-    const el = trackRef.current;
-    if (!el) return;
+    const track = bgTrackRef.current;
+    if (!track) return;
 
-    let last = performance.now();
+    bgLastRef.current = performance.now();
 
     const loop = (now) => {
-      const dt = Math.min(40, now - last); // 防抖
-      last = now;
+      const dt = Math.min(34, now - bgLastRef.current);
+      bgLastRef.current = now;
 
-      const tileW = el.parentElement?.clientWidth || window.innerWidth;
+      const tileW = window.innerWidth; // 你 bg-tile = 100vw
       const N = BACKGROUNDS.length;
       const period = N * tileW;
 
-      // AUTO：匀速向左滚
-      if (modeRef.current === "auto") {
-        const speed = tileW / 300; // 每 ms 移动多少 px（可调：越大越快）
-        let x = xRef.current - speed * dt;
+      const norm = (pos) => {
+        let p = pos % period;
+        if (p < 0) p += period;
+        return p;
+      };
 
-        // wrap：保持在 [-period, 0] 区间更稳
-        if (x <= -period) x += period;
-        xRef.current = x;
-        applyX(x);
+      if (bgModeRef.current === "auto") {
+        const speedPxPerSec = 900; // ✅ 背景速度可调
+        const dp = (speedPxPerSec * dt) / 1000;
+        bgPosRef.current = norm(bgPosRef.current + dp);
+        track.style.transform = `translateX(${-bgPosRef.current}px)`;
       }
 
-      // STOPPING：ease 到 toX
-      if (modeRef.current === "stopping" && stopAnimRef.current) {
-        const { fromX, toX, start, dur } = stopAnimRef.current;
+      if (bgModeRef.current === "stopping" && bgStopRef.current) {
+        const { fromPos, toPos, start, dur } = bgStopRef.current;
         const t = Math.min(1, (now - start) / dur);
         const e = easeOutCubic(t);
-        const x = fromX + (toX - fromX) * e;
-        xRef.current = x;
-        applyX(x);
+        const pos = fromPos + (toPos - fromPos) * e;
+
+        const p = norm(pos);
+        bgPosRef.current = p;
+        track.style.transform = `translateX(${-p}px)`;
 
         if (t >= 1) {
-          // 完成后定格
-          modeRef.current = "fixed";
-          stopAnimRef.current = null;
+          bgModeRef.current = "fixed";
+          bgStopRef.current = null;
         }
       }
 
-      rafRef.current = requestAnimationFrame(loop);
+      bgRafRef.current = requestAnimationFrame(loop);
     };
 
-    rafRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafRef.current);
+    bgRafRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(bgRafRef.current);
   }, []);
 
-  // submit 改了 background => 决定 AUTO or 慢停
+  // 背景：background 改变 => AUTO or 慢停到目标
   useEffect(() => {
-    const el = trackRef.current;
-    if (!el) return;
+    const track = bgTrackRef.current;
+    if (!track) return;
 
-    const tileW = el.parentElement?.clientWidth || window.innerWidth;
+    const tileW = window.innerWidth;
     const N = BACKGROUNDS.length;
     const period = N * tileW;
 
-    // 1) background = null => 回到 AUTO
+    const norm = (pos) => {
+      let p = pos % period;
+      if (p < 0) p += period;
+      return p;
+    };
+
+    bgPosRef.current = norm(bgPosRef.current);
+
+    // 1) null => 回 AUTO
     if (targetBgIndex === null) {
-      modeRef.current = "auto";
-      stopAnimRef.current = null;
+      bgModeRef.current = "auto";
+      bgStopRef.current = null;
       return;
     }
 
-    // 2) 有目标 => 从当前 pos 继续向左走一段，然后停在目标 tile 的边界
-    // 当前走了多少（pos 为 [0, period)）
-    const pos = ((-xRef.current) % period + period) % period;
+    // 2) 有目标 => 慢停到 targetBgIndex
+    const currentPos = bgPosRef.current;          // 0..period
+    const targetPos = targetBgIndex * tileW;      // 对齐 tile 左边界
+    let delta = (targetPos - currentPos + period) % period;
 
-    // 目标位置（pos 也在 [0, period)）
-    const targetPos = targetBgIndex * tileW;
+    // 如果太近，走一整轮更自然
+    if (delta < tileW * 0.45) delta += period;
 
-    // 需要再走多少才能对齐目标（继续向左滚）
-    let delta = (targetPos - pos + period) % period;
+    const fromPos = currentPos;
+    const toPos = currentPos + delta;
+    const dur = Math.min(3200, Math.max(900, (delta / tileW) * 800));
 
-    // 如果刚好已经在目标边界附近，还是让它再走一轮更自然
-    if (delta < tileW * 0.6) delta += period;
-
-    const fromX = xRef.current;
-    const toX = fromX - delta; // 向左 => x 更负
-
-    // 距离越远 duration 越久（可调）
-    const dur = Math.min(3500, Math.max(900, (delta / tileW) * 700));
-
-    modeRef.current = "stopping";
-    stopAnimRef.current = {
-      fromX,
-      toX,
-      start: performance.now(),
-      dur,
-    };
+    bgModeRef.current = "stopping";
+    bgStopRef.current = { fromPos, toPos, start: performance.now(), dur };
   }, [targetBgIndex]);
+
+  /* =========================
+     3) Weapon Reel（向右滚 + 慢停）
+     - 逻辑：pos 表示走了多少（向右 = pos 增加，但 track translateX = -pos 视觉向右）
+  ========================= */
+  const wpStageRef = useRef(null);
+  const wpTrackRef = useRef(null);
+
+  const targetWpIndex = useMemo(
+    () => indexFromPath(WEAPONS, weapon, "weapon"),
+    [weapon]
+  );
+
+  const wpTiles = useMemo(() => [...WEAPONS, ...WEAPONS, ...WEAPONS], []);
+
+  const wpPosRef = useRef(0);
+  const wpModeRef = useRef("auto"); // auto | stopping | fixed
+  const wpStopRef = useRef(null);
+  const wpRafRef = useRef(0);
+  const wpLastRef = useRef(0);
+
+  const showReel = () => {
+    const stage = wpStageRef.current;
+    if (!stage) return;
+    stage.classList.remove("wp-fixed");
+    stage.classList.add("wp-reel");
+  };
+
+  const showFixed = () => {
+    const stage = wpStageRef.current;
+    if (!stage) return;
+    stage.classList.add("wp-fixed");
+    stage.classList.remove("wp-reel");
+  };
+
+  // weapon rAF 循环
+  useEffect(() => {
+    const stage = wpStageRef.current;
+    const track = wpTrackRef.current;
+    if (!stage || !track) return;
+
+    wpLastRef.current = performance.now();
+
+    const loop = (now) => {
+      const dt = Math.min(34, now - wpLastRef.current);
+      wpLastRef.current = now;
+
+      const w = stage.clientWidth || 1;
+      const N = WEAPONS.length;
+      const period = N * w;
+
+      const norm = (pos) => {
+        let p = pos % period;
+        if (p < 0) p += period;
+        return p;
+      };
+
+      if (wpModeRef.current === "auto") {
+        const speedPxPerSec = 650;
+        const dp = (speedPxPerSec * dt) / 1000;
+        wpPosRef.current = norm(wpPosRef.current + dp);
+        track.style.transform = `translateX(${-wpPosRef.current}px)`;
+      }
+
+      if (wpModeRef.current === "stopping" && wpStopRef.current) {
+        const { fromPos, toPos, start, dur } = wpStopRef.current;
+        const t = Math.min(1, (now - start) / dur);
+        const e = easeOutCubic(t);
+        const pos = fromPos + (toPos - fromPos) * e;
+
+        const p = norm(pos);
+        wpPosRef.current = p;
+        track.style.transform = `translateX(${-p}px)`;
+
+        if (t >= 1) {
+          wpModeRef.current = "fixed";
+          wpStopRef.current = null;
+          showFixed();
+        }
+      }
+
+      wpRafRef.current = requestAnimationFrame(loop);
+    };
+
+    wpRafRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(wpRafRef.current);
+  }, []);
+
+  // weapon 改变 => AUTO or 慢停
+  useEffect(() => {
+    const stage = wpStageRef.current;
+    if (!stage) return;
+
+    const w = stage.clientWidth || 1;
+    const N = WEAPONS.length;
+    const period = N * w;
+
+    const norm = (pos) => {
+      let p = pos % period;
+      if (p < 0) p += period;
+      return p;
+    };
+
+    wpPosRef.current = norm(wpPosRef.current);
+
+    // 1) null => 回 AUTO
+    if (targetWpIndex === null) {
+      wpModeRef.current = "auto";
+      wpStopRef.current = null;
+      showReel();
+      return;
+    }
+
+    // 2) 有目标 => 慢停
+    showReel();
+
+    const currentPos = wpPosRef.current;
+    const targetPos = targetWpIndex * w;
+
+    let delta = (targetPos - currentPos + period) % period;
+    if (delta < w * 0.45) delta += period;
+
+    const fromPos = currentPos;
+    const toPos = currentPos + delta;
+    const dur = Math.min(2600, Math.max(750, (delta / w) * 520));
+
+    wpModeRef.current = "stopping";
+    wpStopRef.current = { fromPos, toPos, start: performance.now(), dur };
+  }, [targetWpIndex]);
 
   return (
     <div className="scene">
       <div className="scene-bg">
-        <div ref={trackRef} className="bg-track">
-          {tiles.map((src, idx) => (
+        {/* ✅ Background track（一定要有，不然 background 就 unused） */}
+        <div ref={bgTrackRef} className="bg-track">
+          {bgTiles.map((src, idx) => (
             <div
               key={idx}
               className="bg-tile"
@@ -174,7 +300,25 @@ export default function Scene({ background, mascot, weapon }) {
 
         <div className="fg-center stack">
           <img className="fg-img mascot" src={mascotSrc} alt="mascot" />
-          <img className="fg-img weapon" src={weaponSrc} alt="weapon" />
+
+          {/* ✅ Weapon Stage：里面永远渲染 reel + fixed */}
+          <div ref={wpStageRef} className="weapon-stage wp-reel">
+            <div ref={wpTrackRef} className="weapon-track">
+              {wpTiles.map((src, idx) => (
+                <div className="weapon-tile" key={idx}>
+                  <img className="weapon-img" src={src} alt="" draggable="false" />
+                </div>
+              ))}
+            </div>
+
+            {/* 定格图：wp-fixed 时显示 */}
+            <img
+              className="weapon-fixed"
+              src={weapon || ""}
+              alt="weapon"
+              draggable="false"
+            />
+          </div>
         </div>
       </div>
     </div>
